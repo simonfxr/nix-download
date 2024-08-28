@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/binary"
 	"fmt"
 	"io"
@@ -132,6 +133,7 @@ func (ne *NarExtractor) extractDirectory(path string) error {
 		return fmt.Errorf("failed to create directory %s: %w", fullPath, err)
 	}
 
+	prev := ""
 	for {
 		entry, err := ne.readString()
 		if err == io.EOF {
@@ -163,6 +165,10 @@ func (ne *NarExtractor) extractDirectory(path string) error {
 			return fmt.Errorf("invalid path component: %s", name)
 		}
 
+		if prev != "" && bytes.Compare([]byte(prev), []byte(name)) >= 0 {
+			return fmt.Errorf("path components not sorted, %s >= %s", prev, name)
+		}
+
 		if err := ne.expectString("node"); err != nil {
 			return err
 		}
@@ -174,6 +180,8 @@ func (ne *NarExtractor) extractDirectory(path string) error {
 		if err := ne.expectString(")"); err != nil {
 			return err
 		}
+
+		prev = name
 	}
 
 	return nil
