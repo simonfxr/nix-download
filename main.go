@@ -179,8 +179,11 @@ func fetchAndManifestStorePath(sp StorePath) error {
 	}
 
 	// Extract the NAR
-	extractor := NewNarExtractor(r)
-	if err := extractor.Extract(destPath); err != nil {
+	extractor, err := NewNarExtractor(r, destPath)
+	if err != nil {
+		return fmt.Errorf("failed to create NAR extractor: %w", err)
+	}
+	if err := extractor.Extract(); err != nil {
 		return fmt.Errorf("failed to extract NAR: %w", err)
 	}
 
