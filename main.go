@@ -15,7 +15,9 @@ import (
 	"strings"
 	"sync"
 
+	_ "github.com/breml/rootcerts"
 	"github.com/klauspost/compress/zstd"
+	"github.com/simonfxr/nix-download/narextract"
 	"github.com/ulikunitz/xz"
 )
 
@@ -28,7 +30,6 @@ var (
 type StorePath struct {
 	Path        string
 	References  []string
-	NarInfoURL  string
 	NarURL      string
 	Compression string
 }
@@ -129,14 +130,13 @@ func discoverDependencies(initialPath string) ([]StorePath, error) {
 }
 
 func fetchNarInfo(storePath string) (StorePath, error) {
-	hash := filepath.Base(storePath)
-	var narInfoURL string
+	hash, _, _ := strings.Cut(filepath.Base(storePath), "-")
 	var resp *http.Response
 	var err error
+	var substituter string
 
-	for _, substituter := range substituters {
-		narInfoURL = fmt.Sprintf("%s/%s.narinfo", substituter, hash)
-		resp, err = http.Get(narInfoURL)
+	for _, substituter = range substituters {
+		resp, err = http.Get(fmt.Sprintf("%s/%s.narinfo", substituter, hash))
 		if err == nil && resp.StatusCode == http.StatusOK {
 			break
 		}
@@ -161,20 +161,16 @@ func fetchNarInfo(storePath string) (StorePath, error) {
 	scanner := bufio.NewScanner(resp.Body)
 	for scanner.Scan() {
 		line := scanner.Text()
-		parts := strings.SplitN(line, ":", 2)
-		if len(parts) == 2 {
-			key := strings.TrimSpace(parts[0])
-			value := strings.TrimSpace(parts[1])
+		key, value, ok := strings.Cut(line, ":")
+		if ok {
+			value = value[min(1, len(value)):]
 			narInfo[key] = value
 
 			switch key {
 			case "References":
 				references = strings.Fields(value)
 			case "URL":
-				narURL = value
-				if !strings.HasPrefix(narURL, "http") {
-					narURL = filepath.Dir(narInfoURL) + "/" + narURL
-				}
+				narURL = fmt.Sprintf("%s/%s", substituter, value)
 			}
 		}
 	}
@@ -191,7 +187,6 @@ func fetchNarInfo(storePath string) (StorePath, error) {
 	return StorePath{
 		Path:        storePath,
 		References:  references,
-		NarInfoURL:  narInfoURL,
 		NarURL:      narURL,
 		Compression: narInfo["Compression"],
 	}, nil
@@ -312,7 +307,7 @@ func fetchAndManifestStorePath(sp StorePath) error {
 	}
 
 	// Extract the NAR
-	extractor, err := NewNarExtractor(reader, destPath)
+	extractor, err := narextract.NewNarExtractor(reader, destPath)
 	if err != nil {
 		return fmt.Errorf("failed to create NAR extractor: %w", err)
 	}
@@ -320,7 +315,7 @@ func fetchAndManifestStorePath(sp StorePath) error {
 		return fmt.Errorf("failed to extract NAR: %w", err)
 	}
 
-	fmt.Printf("Successfully manifested %s\n", sp.Path)
+	fmt.Printf("%s\n", destPath)
 	return nil
 }
 

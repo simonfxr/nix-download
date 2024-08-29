@@ -8,3 +8,5 @@ require (
 	github.com/klauspost/compress v1.17.9
 	github.com/ulikunitz/xz v0.5.12
 )
+
+require github.com/breml/rootcerts v0.2.17

@@ -1,4 +1,4 @@
-package main
+package narextract
 
 import (
 	"bytes"
@@ -13,6 +13,9 @@ import (
 type NarExtractor struct {
 	reader io.Reader
 	topDir string
+
+	nextString string
+	haveNext   bool
 }
 
 func NewNarExtractor(reader io.Reader, topDir string) (*NarExtractor, error) {
@@ -142,11 +145,9 @@ func (ne *NarExtractor) extractDirectory(path string) error {
 		if err != nil {
 			return err
 		}
-		if entry == ")" {
-			break
-		}
 		if entry != "entry" {
-			return fmt.Errorf("expected 'entry', got %s", entry)
+			ne.unread(entry)
+			break
 		}
 
 		if err := ne.expectString("("); err != nil {
@@ -187,30 +188,32 @@ func (ne *NarExtractor) extractDirectory(path string) error {
 	return nil
 }
 
-func (ne *NarExtractor) readString() (string, error) {
+func (ne *NarExtractor) unread(str string) {
+	ne.nextString, ne.haveNext = str, true
+}
+
+func (ne *NarExtractor) readString() (str string, err error) {
+	if ne.haveNext {
+		str = ne.nextString
+		ne.nextString, ne.haveNext = "", false
+		return str, nil
+	}
 	length, err := ne.readInt64()
 	if err != nil {
 		return "", err
 	}
 
-	data := make([]byte, length)
+	padding := int((8 - (length % 8)) % 8)
+	data := make([]byte, length+int64(padding))
 	if _, err := io.ReadFull(ne.reader, data); err != nil {
 		return "", fmt.Errorf("failed to read string data: %w", err)
 	}
 
 	// Remove null terminator
-	data = data[:len(data)-1]
+	data = data[:len(data)-padding]
 
-	// Read padding
-	padding := (8 - (length % 8)) % 8
-	if padding > 0 {
-		_, err := io.CopyN(io.Discard, ne.reader, int64(padding))
-		if err != nil {
-			return "", fmt.Errorf("failed to read padding: %w", err)
-		}
-	}
-
-	return string(data), nil
+	str = string(data)
+	return str, nil
 }
 
 func (ne *NarExtractor) readInt64() (int64, error) {
