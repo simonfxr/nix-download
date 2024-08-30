@@ -1,8 +1,7 @@
 .PHONY: build docker
 
-build:
-	CGO_ENABLED=0 go build -o nix-download
+nix-download:
+	CGO_ENABLED=0 go build -o $@
 
-docker: build
-	docker build -t nix-download .
-
+container: nix-download
+	docker build -t nix-download --iidfile $@ .

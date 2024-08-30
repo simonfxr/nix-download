@@ -35,6 +35,9 @@ func (ne *NarExtractor) Extract() error {
 		return fmt.Errorf("invalid NAR magic: %s", magic)
 	}
 
+	if parent := filepath.Dir(ne.topDir); parent != ne.topDir {
+		_ = os.MkdirAll(parent, 0755)
+	}
 	return ne.extractNarObj(".")
 }
 
@@ -72,14 +75,14 @@ func (ne *NarExtractor) extractNarObj(path string) error {
 }
 
 func (ne *NarExtractor) extractRegular(path string) error {
-	executable := false
 	nextField, err := ne.readString()
 	if err != nil {
 		return err
 	}
 
+	mode := os.FileMode(0644)
 	if nextField == "executable" {
-		executable = true
+		mode = 0755
 		if err := ne.expectString(""); err != nil {
 			return err
 		}
@@ -99,14 +102,8 @@ func (ne *NarExtractor) extractRegular(path string) error {
 	}
 
 	fullPath := filepath.Join(ne.topDir, path)
-	if err := os.WriteFile(fullPath, []byte(contents), 0644); err != nil {
+	if err := ne.writeFile(fullPath, []byte(contents), mode); err != nil {
 		return fmt.Errorf("failed to write file %s: %w", fullPath, err)
-	}
-
-	if executable {
-		if err := os.Chmod(fullPath, 0755); err != nil {
-			return fmt.Errorf("failed to set executable permission on %s: %w", fullPath, err)
-		}
 	}
 
 	return nil
@@ -132,7 +129,7 @@ func (ne *NarExtractor) extractSymlink(path string) error {
 
 func (ne *NarExtractor) extractDirectory(path string) error {
 	fullPath := filepath.Join(ne.topDir, path)
-	if err := os.MkdirAll(fullPath, 0755); err != nil {
+	if err := os.Mkdir(fullPath, 0755); err != nil {
 		return fmt.Errorf("failed to create directory %s: %w", fullPath, err)
 	}
 
@@ -233,6 +230,16 @@ func (ne *NarExtractor) expectString(expected string) error {
 		return fmt.Errorf("expected %q, got %q", expected, s)
 	}
 	return nil
+}
+
+func (ne *NarExtractor) writeFile(path string, data []byte, perm os.FileMode) error {
+	fd, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, perm)
+	if err != nil {
+		return err
+	}
+	defer fd.Close()
+	_, err = fd.Write(data)
+	return err
 }
 
 func isValidPathComponent(name string) bool {
