@@ -36,7 +36,7 @@ jobs:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
         run: |
-          go build -v -o nix-download-\${{ matrix.goos }}-\${{ matrix.goarch }} .
+          go build -v -o nix-download-${{ matrix.goos }}-${{ matrix.goarch }} .
 
       - name: Upload artifact
         uses: actions/upload-artifact@v3
@@ -59,17 +59,17 @@ jobs:
         id: create_release
         uses: actions/create-release@v1
         env:
-          GITHUB_TOKEN: \${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          tag_name: \${{ github.ref }}
-          release_name: Release \${{ github.ref }}
+          tag_name: ${{ github.ref }}
+          release_name: Release ${{ github.ref }}
           draft: false
           prerelease: false
 
       - name: Upload Release Assets
         uses: actions/github-script@v6
         with:
-          github-token: \${{ secrets.GITHUB_TOKEN }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
             const fs = require('fs').promises;
             const { repo: { owner, repo }, sha } = context;
@@ -80,7 +80,7 @@ jobs:
               await github.rest.repos.uploadReleaseAsset({
                 owner,
                 repo,
-                release_id: \${{ steps.create_release.outputs.id }},
+                release_id: ${{ steps.create_release.outputs.id }},
                 name: artifact,
                 data: await fs.readFile(artifact + '/' + artifact)
               });
