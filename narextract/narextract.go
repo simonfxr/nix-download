@@ -18,6 +18,9 @@ type NarExtractor struct {
 	haveNext   bool
 }
 
+// Should be more then enough
+const maxStringLength = 16 * 1024
+
 func NewNarExtractor(reader io.Reader, topDir string) (*NarExtractor, error) {
 	absPath, err := filepath.Abs(topDir)
 	if err != nil {
@@ -96,14 +99,22 @@ func (ne *NarExtractor) extractRegular(path string) error {
 		return fmt.Errorf("expected 'contents', got %s", nextField)
 	}
 
-	contents, err := ne.readString()
+	fullPath := filepath.Join(ne.topDir, path)
+
+	length, err := ne.readInt64()
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to read file length: %s: %w", fullPath, err)
 	}
 
-	fullPath := filepath.Join(ne.topDir, path)
-	if err := ne.writeFile(fullPath, []byte(contents), mode); err != nil {
+	if err := ne.writeFile(fullPath, length, mode); err != nil {
 		return fmt.Errorf("failed to write file %s: %w", fullPath, err)
+	}
+
+	padding := (8 - (length % 8)) % 8
+	if padding > 0 {
+		if _, err := io.ReadFull(ne.reader, make([]byte, padding)); err != nil {
+			return fmt.Errorf("failed to read file padding %s: %w", fullPath, err)
+		}
 	}
 
 	return nil
@@ -200,6 +211,10 @@ func (ne *NarExtractor) readString() (str string, err error) {
 		return "", err
 	}
 
+	if length > maxStringLength {
+		return "", fmt.Errorf("string length exceeds maximum of %d, got: %d", maxStringLength, length)
+	}
+
 	padding := int((8 - (length % 8)) % 8)
 	data := make([]byte, length+int64(padding))
 	if _, err := io.ReadFull(ne.reader, data); err != nil {
@@ -232,13 +247,13 @@ func (ne *NarExtractor) expectString(expected string) error {
 	return nil
 }
 
-func (ne *NarExtractor) writeFile(path string, data []byte, perm os.FileMode) error {
+func (ne *NarExtractor) writeFile(path string, n int64, perm os.FileMode) error {
 	fd, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, perm)
 	if err != nil {
 		return err
 	}
 	defer fd.Close()
-	_, err = fd.Write(data)
+	_, err = io.CopyN(fd, ne.reader, n)
 	return err
 }
 
