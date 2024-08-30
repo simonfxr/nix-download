@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"compress/gzip"
+	"context"
 	"crypto/ed25519"
 	"crypto/sha256"
 	"encoding/base64"
@@ -13,6 +14,8 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -113,7 +116,7 @@ func main() {
 
 func discoverDependencies(initialPath string) ([]StorePath, error) {
 	initialPath = strings.TrimPrefix(initialPath, "/nix/store/")
-	visited := make(map[string]bool)
+	visited := make(map[string]struct{})
 	toVisit := []string{initialPath}
 	var result []StorePath
 
@@ -121,10 +124,10 @@ func discoverDependencies(initialPath string) ([]StorePath, error) {
 		path := toVisit[0]
 		toVisit = toVisit[1:]
 
-		if visited[path] {
+		if _, ok := visited[path]; ok {
 			continue
 		}
-		visited[path] = true
+		visited[path] = struct{}{}
 
 		// Check if the path already exists on disk
 		if _, err := os.Stat(filepath.Join(nixStore, path)); err == nil {
@@ -140,11 +143,14 @@ func discoverDependencies(initialPath string) ([]StorePath, error) {
 
 		// Add references to toVisit
 		for _, ref := range storePath.References {
-			if !visited[ref] {
+			if _, ok := visited[ref]; !ok {
 				toVisit = append(toVisit, ref)
 			}
 		}
 	}
+
+	// Reverse to get a proper topological sorted order
+	slices.Reverse(result)
 
 	return result, nil
 }
@@ -219,6 +225,8 @@ func fetchNarInfo(storeBase string) (StorePath, error) {
 		return StorePath{}, fmt.Errorf("unsupported hash algorithm: %s", narHash)
 	}
 
+	sort.Strings(references)
+
 	return StorePath{
 		BasePath:    storeBase,
 		References:  references,
@@ -275,16 +283,41 @@ func buildSignatureMessage(narInfo map[string]string) string {
 
 func fetchAndManifestStorePaths(storePaths []StorePath) error {
 	var wg sync.WaitGroup
-	errors := make(chan error, len(storePaths))
+	n := min(8, len(storePaths))
+	ch := make(chan func() error)
+	errors := make(chan error, n)
 
-	for _, sp := range storePaths {
-		wg.Add(1)
-		go func(sp StorePath) {
-			defer wg.Done()
-			if err := fetchAndManifestStorePath(sp); err != nil {
-				errors <- fmt.Errorf("error processing %s: %w", sp.BasePath, err)
+	go func() {
+		defer close(ch)
+		for _, sp := range storePaths {
+			destPath := filepath.Join(nixStore, sp.BasePath)
+			ch <- func() error {
+				if err := fetchAndManifestStorePath(destPath, sp); err != nil {
+					return fmt.Errorf("error processing %s: %w", destPath, err)
+				}
+				return nil
 			}
-		}(sp)
+			fmt.Printf("%s\n", destPath)
+		}
+	}()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	for range n {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for f := range ch {
+				if ctx.Err() != nil {
+					return
+				}
+				if err := f(); err != nil {
+					cancel()
+					errors <- err
+					return
+				}
+			}
+		}()
 	}
 
 	wg.Wait()
@@ -299,7 +332,7 @@ func fetchAndManifestStorePaths(storePaths []StorePath) error {
 	return nil
 }
 
-func fetchAndManifestStorePath(sp StorePath) error {
+func fetchAndManifestStorePath(destPath string, sp StorePath) error {
 	// Create a temporary directory
 	tempDir := filepath.Join(nixStore, ".nix-download_"+sp.BasePath)
 	defer func() {
@@ -366,12 +399,10 @@ func fetchAndManifestStorePath(sp StorePath) error {
 	}
 
 	// Move the temporary directory to the final destination
-	destPath := filepath.Join(nixStore, sp.BasePath)
 	if err := os.Rename(tempDir, destPath); err != nil {
 		return fmt.Errorf("failed to move temporary directory to final destination: %w", err)
 	}
 
-	fmt.Printf("%s\n", destPath)
 	return nil
 }
 
