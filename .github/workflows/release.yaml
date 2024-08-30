@@ -3,85 +3,26 @@ name: Release
 on:
   push:
     tags:
-      - "v*"
+      - 'v*'
+
+permissions:
+  contents: write
 
 jobs:
-  build:
-    name: Build and Release
+  goreleaser:
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        include:
-          - goos: linux
-            goarch: amd64
-          - goos: linux
-            goarch: arm64
-          - goos: darwin
-            goarch: arm64
-          - goos: darwin
-            goarch: amd64
-
     steps:
-      - name: Checkout code
+      - name: Checkout
         uses: actions/checkout@v3
-
+        with:
+          fetch-depth: 0
       - name: Set up Go
         uses: actions/setup-go@v4
+      - name: Run GoReleaser
+        uses: goreleaser/goreleaser-action@v4
         with:
-          go-version: "1.22"
-
-      - name: Build
-        env:
-          CGO_ENABLED: "0"
-          GOOS: ${{ matrix.goos }}
-          GOARCH: ${{ matrix.goarch }}
-        run: |
-          go build -v -o nix-download-${{ matrix.goos }}-${{ matrix.goarch }} .
-
-      - name: Upload artifact
-        uses: actions/upload-artifact@v3
-        with:
-          name: nix-download-${{ matrix.goos }}-${{ matrix.goarch }}
-          path: nix-download-${{ matrix.goos }}-${{ matrix.goarch }}
-
-  release:
-    name: Create Release
-    needs: build
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v3
-
-      - name: Download artifacts
-        uses: actions/download-artifact@v3
-
-      - name: Create Release
-        id: create_release
-        uses: actions/create-release@v1
+          distribution: goreleaser
+          version: latest
+          args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          tag_name: ${{ github.ref }}
-          release_name: Release ${{ github.ref }}
-          draft: false
-          prerelease: false
-
-      - name: Upload Release Assets
-        uses: actions/github-script@v6
-        with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          script: |
-            const fs = require('fs').promises;
-            const { repo: { owner, repo }, sha } = context;
-
-            for (let artifact of await fs.readdir('.')) {
-              if (!artifact.startsWith('nix-download-')) continue;
-              console.log('Uploading', artifact);
-              await github.rest.repos.uploadReleaseAsset({
-                owner,
-                repo,
-                release_id: ${{ steps.create_release.outputs.id }},
-                name: artifact,
-                data: await fs.readFile(artifact + '/' + artifact)
-              });
-            }
