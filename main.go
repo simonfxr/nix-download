@@ -29,6 +29,7 @@ import (
 
 var (
 	nixStore     = ""
+	skipDeps     = false
 	substituters = []string{}
 	knownKeys    = map[string]ed25519.PublicKey{}
 	transport    = func() http.RoundTripper {
@@ -59,6 +60,7 @@ func main() {
 	var publicKeys stringSliceFlag
 
 	flag.StringVar(&nixStore, "store", "/nix/store", "Nix store root directory")
+	flag.BoolVar(&skipDeps, "skip-dependencies", false, "Skip downloading any dependencies")
 	flag.Var((*stringSliceFlag)(&substituters), "substituter", "URL of a binary cache (can be specified multiple times)")
 	flag.Var(&publicKeys, "public-key", "Public key in the format name:base64pubkey (can be specified multiple times)")
 
@@ -140,6 +142,10 @@ func discoverDependencies(initialPath string) ([]StorePath, error) {
 		}
 
 		result = append(result, storePath)
+
+		if skipDeps {
+			continue
+		}
 
 		// Add references to toVisit
 		for _, ref := range storePath.References {
